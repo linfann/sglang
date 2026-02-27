@@ -197,16 +197,17 @@ class NormResidualGateAddNormScale:
         copy_if(tWgW1, tWrW1)  # gmem -> rmem
         copy_if(tBgB1, tBrB1)  # gmem -> rmem
 
-        # For add_gate_norm, output:
-        # - residual_out = norm2(x + gate * norm1(residual)) * (scale + 1)
+        # For norm_residual_gate_add_norm_scale, output:
+        # - residual_out = x + gate * norm1(residual)
+        # - y = norm2(residual_out) * (scale + 1)
         value = tRrR.load()
 
-        # Compute: value = norm(residual)
+        # Compute: value = norm1(residual)
         tNrN = cute.make_rmem_tensor_like(tRrR, tRrR.element_type)
         tNrN.store(value.to(tNrN.element_type))
         tNrN = norm(tNrN, tWrW1, tBrB1)
 
-        # Compute: value = gate * norm(residual) + x
+        # Compute: value = x + gate * norm(residual)
         value = tXrX.load() + tGrG.load() * tNrN.load()
 
         # Store: residual_out
@@ -224,7 +225,7 @@ class NormResidualGateAddNormScale:
         # Compute: value = value * (scale + 1)
         copy_if(tSCgSC, tSCrSC)  # gmem -> rmem
         if cutlass.const_expr(isinstance(tSCrSC, cute.Tensor)):
-            value = value * (1 + tSCrSC.load())
+            value = value * (tSCrSC.load() + 1)
 
         # Store: norm_out
         tNOrNO.store(value.to(tNOrNO.element_type))
@@ -301,8 +302,10 @@ def fused_norm_residual_gate_add_norm_scale(
 
     Expects:
       - x: [B, S, D]
+      - residual: [B, S, D]
+      - gate: None, [B, 1, D], [B, S, D] or [B, F, 1, D]
       - weight/bias: None, [D]
-      - scale/shift: [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
+      - scale: [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
       - norm_type: str, "layer" or "rms"
       - eps: Optional[float], default: 1e-5
 

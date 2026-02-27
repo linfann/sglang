@@ -479,7 +479,8 @@ class _NormResidualGateAddNormScale(CustomOp):
     """
     Fused kernel that combines:
     1. normed = layernorm(x) or rmsnorm(x)
-    2. out = norm2(x + gate * norm1(residual)) * (scale + 1)
+    2. out = x + gate * normed1(residual)
+    2. norm_out, out = normed2(out) * (scale + 1), out
     """
 
     norm_type: str
@@ -523,7 +524,7 @@ class _NormResidualGateAddNormScale(CustomOp):
                 stacklevel=2,
             )
             return self.forward_native(residual, x, gate, scale)
-        # todo use fused kernel
+
         from sglang.jit_kernel.diffusion.cutedsl.norm_residual_gate_add_norm_scale import (
             fused_norm_residual_gate_add_norm_scale,
         )
@@ -571,20 +572,18 @@ class _NormResidualGateAddNormScale(CustomOp):
                 # gate.shape: [batch_size, num_frames, 1, inner_dim]
                 num_frames = gate.shape[1]
                 frame_seqlen = x.shape[1] // num_frames
-                residual_output = (
+                residual_output = x + gate * (
                     normalized_residual.unflatten(
                         dim=1, sizes=(num_frames, frame_seqlen)
                     )
-                    * gate
-                ).flatten(1, 2) + x
+                ).flatten(1, 2)
 
             else:
                 # gate.shape: [batch_size, 1, inner_dim]
-                residual_output = normalized_residual * gate + x
+                residual_output = x + gate * normalized_residual
         else:
             raise ValueError(f"Gate type {type(gate)} not supported")
-        normalized = self.norm2(residual_output)
-        norm_output = normalized * (scale + 1.0)
+        norm_output = self.norm2(residual_output) * (scale + 1.0)
         return norm_output, residual_output
 
 
@@ -632,7 +631,6 @@ class _AddGateNorm(CustomOp):
         x: torch.Tensor,
         gate: torch.Tensor | int,
     ) -> torch.Tensor:
-        logger.info("### use cuda fused_add_gate_norm")
         if x.shape[-1] % 256 != 0 and x.shape[-1] <= 8192:
             import warnings
 
@@ -641,7 +639,7 @@ class _AddGateNorm(CustomOp):
                 stacklevel=2,
             )
             return self.forward_native(residual, x, gate)
-        # todo use fused kernel
+
         from sglang.jit_kernel.diffusion.cutedsl.add_gate_norm import (
             fused_add_gate_norm,
         )
@@ -673,28 +671,27 @@ class _AddGateNorm(CustomOp):
         gate: torch.Tensor | int,
     ) -> torch.Tensor:
         # x.shape: [batch_size, seq_len, inner_dim]
-        logger.info("### use native fused_add_gate_norm")
         normalized_residual = self.norm(residual)
 
         if isinstance(gate, int):
             # used by cross-attention, should be 1
             assert gate == 1
-            residual_output = normalized_residual + x
+            residual_output = x + normalized_residual
         elif isinstance(gate, torch.Tensor):
             if gate.dim() == 4:
                 # gate.shape: [batch_size, num_frames, 1, inner_dim]
                 num_frames = gate.shape[1]
                 frame_seqlen = x.shape[1] // num_frames
-                residual_output = (
+                residual_output = x + (
                     normalized_residual.unflatten(
                         dim=1, sizes=(num_frames, frame_seqlen)
                     )
                     * gate
-                ).flatten(1, 2) + x
+                ).flatten(1, 2)
 
             else:
                 # gate.shape: [batch_size, 1, inner_dim]
-                residual_output = x + normalized_residual * gate
+                residual_output = x + gate * normalized_residual
         else:
             raise ValueError(f"Gate type {type(gate)} not supported")
         return residual_output

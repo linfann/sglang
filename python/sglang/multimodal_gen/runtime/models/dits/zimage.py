@@ -374,8 +374,8 @@ class ZImageTransformerBlock(nn.Module):
             )
 
             # between attention and ffn
-            # x + gate_msa * self.attention_norm2(attn_out)
-            # norm_x = ffn_norm1(x) * (scale_mlp + 1.0)
+            # x = x + gate_msa * self.attention_norm2(attn_out)
+            # norm_x = self.ffn_norm1(x) * (scale_mlp + 1.0)
             norm_x, x = self.fused_norm_residual_gate_add_norm_scale(
                 attn_out, x, gate_msa, scale_mlp
             )
@@ -384,7 +384,7 @@ class ZImageTransformerBlock(nn.Module):
             ffn_out = self.feed_forward(norm_x)
 
             # after ffn
-            # x = x + gate_mlp * self.fused_add_gate_norm.norm(ffn_out)
+            # x = x + gate_mlp * self.ffn_norm2(ffn_out)
             x = self.fused_add_gate_norm(ffn_out, x, gate_mlp)
         else:
             # Attention block

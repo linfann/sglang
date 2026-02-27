@@ -190,8 +190,8 @@ class AddGateNorm:
         tNrN.store(value.to(tNrN.element_type))
         tNrN = norm(tNrN, tWrW, tBrB)
 
-        # Compute: value = gate * norm(residual) + x
-        value = tGrG.load() * tNrN.load() + tXrX.load()
+        # Compute: value = x + gate * norm(residual)
+        value = tXrX.load() + tGrG.load() * tNrN.load()
 
         # Store: residual_out
         if cutlass.const_expr(isinstance(tROrRO, cute.Tensor)):
@@ -259,13 +259,13 @@ def fused_add_gate_norm(
     eps: float = 1e-5,
 ) -> torch.Tensor:
     """
-    Fuse: norm(x) * (1 + scale) + shift
+    Fuse: x + gate * norm(residual)
       where norm is either layernorm or rmsnorm.
 
     Expects:
-      - x: [B, S, D]
+      - x/residual: [B, S, D]
+      - gate: None, [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
       - weight/bias: None, [D]
-      - scale/shift: [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
       - norm_type: str, "layer" or "rms"
       - eps: Optional[float], default: 1e-5
 
