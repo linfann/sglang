@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional
 
 import cuda.bindings.driver as cuda
 import cutlass
@@ -54,7 +54,7 @@ def to_fake_cute_args(t: torch.Tensor):
     return to_cute_arg(t)
 
 
-# output = ffn_norm1(x + attention_norm2(attn_out))
+# output = x + gate_mlp * norm(residual)
 class AddGateNorm:
     @classmethod
     def make_hash_key(cls, *inputs):
@@ -242,9 +242,7 @@ def validate_scale_shift(t: torch.Tensor, B: int, S: int, D: int):
         raise ValueError(f"Validate failed: not contiguous on dim D.")
 
 
-def validate_gate(t: Union[torch.Tensor, int], B: int, S: int, D: int):
-    if not isinstance(t, torch.Tensor):
-        return
+def validate_gate(t: torch.Tensor, B: int, S: int, D: int):
     validate_scale_shift(t, B, S, D)
 
 
@@ -252,7 +250,7 @@ def validate_gate(t: Union[torch.Tensor, int], B: int, S: int, D: int):
 def fused_add_gate_norm(
     x: torch.Tensor,
     residual: torch.Tensor,
-    gate: Optional[torch.Tensor],
+    gate: torch.Tensor,
     weight: Optional[torch.Tensor],
     bias: Optional[torch.Tensor],
     norm_type: str,
@@ -264,7 +262,7 @@ def fused_add_gate_norm(
 
     Expects:
       - x/residual: [B, S, D]
-      - gate: None, [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
+      - gate: [1], [D], [1/B, D], [1/B, 1/S, D] or [B, F, 1, D]
       - weight/bias: None, [D]
       - norm_type: str, "layer" or "rms"
       - eps: Optional[float], default: 1e-5
@@ -295,8 +293,6 @@ def fused_add_gate_norm(
         weight = 1 if weight is None else weight
         bias = 0 if bias is None else bias
         resi_out = torch.empty_like(x)  # create output tensor
-        # gate=None means gate=1 (no scaling)
-        gate = 1 if gate is None else gate
         torch_tensors = [resi_out, residual, x, gate, weight, bias]
         # Compile cache
         hash_key = AddGateNorm.make_hash_key(norm_type, *torch_tensors)
@@ -313,3 +309,17 @@ def fused_add_gate_norm(
         return resi_out
     else:
         raise ValueError(f'norm_type must be one of "layer" and "rms"')
+
+
+@fused_add_gate_norm.register_fake
+def _fused_add_gate_norm_fake(
+    x,
+    residual,
+    gate,
+    weight,
+    bias,
+    norm_type,
+    eps=1e-5,
+):
+    residual_out = x.new_empty(x.shape)
+    return residual_out

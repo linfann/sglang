@@ -208,7 +208,10 @@ class NormResidualGateAddNormScale:
         tNrN = norm(tNrN, tWrW1, tBrB1)
 
         # Compute: value = x + gate * norm(residual)
-        value = tXrX.load() + tGrG.load() * tNrN.load()
+        if cutlass.const_expr(isinstance(tGrG, cute.Tensor)):
+            value = tXrX.load() + tGrG.load() * tNrN.load()
+        else:
+            value = tXrX.load() + tNrN.load()
 
         # Store: residual_out
         tROrRO.store(value.to(tROrRO.element_type))
@@ -371,3 +374,21 @@ def fused_norm_residual_gate_add_norm_scale(
         return norm_out, resi_out
     else:
         raise ValueError(f'norm_type must be one of "layer" and "rms"')
+
+
+@fused_norm_residual_gate_add_norm_scale.register_fake
+def _fused_norm_residual_gate_add_norm_scale_fake(
+    x,
+    residual,
+    gate,
+    weight1,
+    bias1,
+    weight2,
+    bias2,
+    scale,
+    norm_type,
+    eps=1e-5,
+):
+    y = x.new_empty(x.shape)
+    residual_out = x.new_empty(x.shape)
+    return y, residual_out

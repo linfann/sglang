@@ -629,13 +629,13 @@ class _AddGateNorm(CustomOp):
         self,
         residual: torch.Tensor,
         x: torch.Tensor,
-        gate: torch.Tensor | int,
+        gate: torch.Tensor,
     ) -> torch.Tensor:
         if x.shape[-1] % 256 != 0 and x.shape[-1] <= 8192:
             import warnings
 
             warnings.warn(
-                "NormResidualGateAddNormScale cuda not available, using native fallback",
+                "AddGateNorm cuda not available, using native fallback",
                 stacklevel=2,
             )
             return self.forward_native(residual, x, gate)
@@ -644,15 +644,10 @@ class _AddGateNorm(CustomOp):
             fused_add_gate_norm,
         )
 
-        if isinstance(gate, int) and gate != 1:
-            raise ValueError(
-                f"Only gate value of 1 is supported for int type, but got {gate}"
-            )
-
         return fused_add_gate_norm(
             x.contiguous(),
             residual.contiguous(),
-            gate.contiguous() if isinstance(gate, torch.Tensor) else None,
+            gate.contiguous(),
             _ensure_contiguous(getattr(self.norm, "weight", None)),
             _ensure_contiguous(getattr(self.norm, "bias", None)),
             self.norm_type,
